@@ -203,7 +203,7 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 		for (int element : tempPair.second)
 		{
 			int localIndexOfNode = G2L.at(element);
-			if (localIndexOfNode < NOwn && localIndexOfNode >= 0)
+			if (localIndexOfNode <= NLocal && localIndexOfNode >= 0)
 			{
 				JA.push_back(localIndexOfNode);
 				counterIA++;
@@ -283,21 +283,30 @@ void calculateSubAreaIndexes(int processId, int processesColumns, int processesR
 	}*/
 }
 
-std::string vectorToString(std::vector<int> intVector)
+std::string vectorToString(std::vector<int> intVector, std::vector<int> L2G, bool isGlobal = false)
 {
 	std::stringstream result;
 	result << "[";
 
 	for (int i = 0; i < intVector.size(); i++)
 	{
-
-		if (i == intVector.size() - 1)
+		int currenntElem;
+		if (isGlobal)
 		{
-			result << std::to_string(intVector.at(i));
+			currenntElem = L2G.at(intVector.at(i));
 		}
 		else
 		{
-			result << std::to_string(intVector.at(i)) << ", ";
+			currenntElem = intVector.at(i);
+		}
+
+		if (i == intVector.size() - 1)
+		{
+			result << std::to_string(currenntElem);
+		}
+		else
+		{
+			result << std::to_string(currenntElem) << ", ";
 		}
 	}
 
@@ -344,22 +353,25 @@ std::string printResult(std::map<int, std::vector<int>> graph, std::vector<int> 
 
 	result << "Process " << processId << ": N (size of matrix) - " << countOfNodes << " nodes" << std::endl;
 
-	std::string IAstring = vectorToString(IA);
+	std::string IAstring = vectorToString(IA, L2G);
 	result << "Process " << processId << ": IA: " << IAstring << std::endl;
 
-	std::string JAstring = vectorToString(JA);
+	std::string JAstring = vectorToString(JA, L2G);
 	result << "Process " << processId << ": JA: " << JAstring << std::endl;
+
+	std::string JAGlobalString = vectorToString(JA, L2G, true);
+	result << "Process " << processId << ": JA (Global): " << JAGlobalString << std::endl;
 
 	std::string adjancecyString = createAdjacencyList(graph);
 	result << "Process " << processId << ": Adjacency list: " << std::endl << adjancecyString << std::endl;
 
-	std::string G2LString = vectorToString(G2L);
+	std::string G2LString = vectorToString(G2L, L2G);
 	result << "Process " << processId << ": G2L: " << G2LString << std::endl;
 
-	std::string L2GString = vectorToString(L2G);
+	std::string L2GString = vectorToString(L2G, L2G);
 	result << "Process " << processId << ": L2G: " << L2GString << std::endl;
 
-	std::string PartString = vectorToString(Part);
+	std::string PartString = vectorToString(Part, L2G);
 	result << "Process " << processId << ": Part: " << PartString << std::endl;
 
 	//std::cout << "Execution time: " << seconds << " s." << std::endl;
@@ -474,23 +486,20 @@ std::string printSLAE(std::vector<double> A, std::vector<double> b, std::vector<
 	int currentIndex = 0;
 	for (int i = 1; i < NOwn; i++)
 	{
-		if (i <= NOwn)
+		countOfLinks = IA.at(i) - IA.at(i - 1);
+
+		resultString << std::to_string(i - 1) << ". [";
+		for (int j = 0; j < countOfLinks; j++)
 		{
-			countOfLinks = IA.at(i) - IA.at(i - 1);
-
-			resultString << std::to_string(i - 1) << ". [";
-			for (int j = 0; j < countOfLinks; j++)
+			resultString << std::fixed << std::showpoint << std::setprecision(5) << A.at(currentIndex);
+			currentIndex++;
+			if (j != countOfLinks - 1)
 			{
-				resultString << std::fixed << std::showpoint << std::setprecision(5) << A.at(currentIndex);
-				currentIndex++;
-				if (j != countOfLinks - 1)
-				{
-					resultString << ", ";
-				}
+				resultString << ", ";
 			}
-
-			resultString << "]";
 		}
+
+		resultString << "]";
 
 		resultString << " = " << std::fixed << std::showpoint << std::setprecision(5) << b.at(i - 1) << std::endl;
 	}
@@ -501,6 +510,112 @@ std::string printSLAE(std::vector<double> A, std::vector<double> b, std::vector<
 
 #pragma endregion
 
+
+#pragma region Этап 3. Построение схемы обменов
+
+void createCom(int NLocal, int NOwn, std::vector<int> IA, std::vector<int> JA, std::vector<int> Part, std::vector<int> L2G,
+	std::vector<int> G2L, std::vector<int>& Neighbours, std::vector<int>& SendOffet, std::vector<int>& RecvOffset,
+	std::vector<int>& Send, std::vector<int>& Recv, int countOfProcesses) {
+
+	std::vector<std::vector<int>> SendToProcess;
+	std::vector<std::vector<int>> RecvFromProcess;
+	SendToProcess.resize(countOfProcesses);
+	RecvFromProcess.resize(countOfProcesses);
+
+	for (int i = 0; i < NOwn; i++)
+	{
+		int startIndex = IA.at(i);
+		int endIndex = IA.at(i + 1);
+
+		for (int j = startIndex; j < endIndex; ++j)
+		{
+			int indexOfNode = JA.at(j);
+
+			// Значит попали в вершину, которая от другого процесса
+			if (indexOfNode >= NOwn && indexOfNode < NLocal)
+			{
+				int haloProcess = Part.at(indexOfNode);
+				SendToProcess.at(haloProcess).push_back(i);
+				RecvFromProcess.at(haloProcess).push_back(indexOfNode);
+			}
+
+		}
+	}
+
+	for (int haloProcessId = 0; haloProcessId < countOfProcesses; haloProcessId++)
+	{
+		std::vector<int> SendToProcessHalo = SendToProcess.at(haloProcessId);
+		std::vector<int> RecvFromProcessHalo = RecvFromProcess.at(haloProcessId);
+
+		if (SendToProcessHalo.empty() && RecvFromProcessHalo.empty())
+		{
+			continue;
+		}
+
+		Neighbours.push_back(haloProcessId);
+
+		// SendToProcessHalo.size() и RecvFromProcessHalo.size() должны быть равны
+		for (int i = 0; i < SendToProcessHalo.size(); i++) {
+			SendToProcessHalo.at(i) = L2G.at(SendToProcessHalo.at(i));
+			RecvFromProcessHalo.at(i) = L2G.at(RecvFromProcessHalo.at(i));
+		}
+
+		// Сортируем по возрастанию глобальных номеров
+		std::sort(SendToProcessHalo.begin(), SendToProcessHalo.end());
+		std::sort(RecvFromProcessHalo.begin(), RecvFromProcessHalo.end());
+
+		// Удаляем возможные дубликаты
+		SendToProcessHalo.resize(std::unique(SendToProcessHalo.begin(), SendToProcessHalo.end()) - SendToProcessHalo.begin());
+		RecvFromProcessHalo.resize(std::unique(RecvFromProcessHalo.begin(), RecvFromProcessHalo.end()) - RecvFromProcessHalo.begin());
+
+		// Конвертируем обратно в локальные
+		for (int i = 0; i < SendToProcessHalo.size(); i++) {
+			SendToProcessHalo.at(i) = G2L.at(SendToProcessHalo.at(i));
+			RecvFromProcessHalo.at(i) = G2L.at(RecvFromProcessHalo.at(i));
+		}
+
+		// Добавляем все в вектора Send и Recv
+		for (int i = 0; i < SendToProcessHalo.size(); i++) {
+			Send.push_back(SendToProcessHalo.at(i));
+			Recv.push_back(RecvFromProcessHalo.at(i));
+		}
+
+		SendOffet.push_back(Send.size());
+		RecvOffset.push_back(Recv.size());
+	}
+
+}
+
+std::string printCom(std::vector<int> Neighbours, std::vector<int> SendOffet, std::vector<int> RecvOffset,
+	std::vector<int> Send, std::vector<int> Recv, int processId, std::vector<int> L2G) {
+
+	std::stringstream result;
+
+	std::string NeighboursString = vectorToString(Neighbours, L2G);
+	result << "Process " << processId << ": Neighbours: " << NeighboursString << std::endl;
+
+	std::string SendOffsetString = vectorToString(SendOffet, L2G);
+	result << "Process " << processId << ": SendOffset: " << SendOffsetString << std::endl;
+
+	std::string RecvOffsetString = vectorToString(RecvOffset, L2G);
+	result << "Process " << processId << ": RecvOffset: " << RecvOffsetString << std::endl;
+
+	std::string SendString = vectorToString(Send, L2G);
+	result << "Process " << processId << ": Send: " << SendString << std::endl;
+
+	std::string SendStringGlobal = vectorToString(Send, L2G, true);
+	result << "Process " << processId << ": Send (Global): " << SendStringGlobal << std::endl;
+
+	std::string RecvString = vectorToString(Recv, L2G);
+	result << "Process " << processId << ": Recv: " << RecvString << std::endl;
+
+	std::string RecvStringGlobal = vectorToString(Recv, L2G, true);
+	result << "Process " << processId << ": Recv (Global): " << RecvStringGlobal << std::endl;
+
+	return result.str();
+}
+
+#pragma endregion
 
 int main(int argc, char* argv[])
 {
@@ -573,13 +688,28 @@ int main(int argc, char* argv[])
 	//std::cout << "Second stage time per 1 elem: " << endSecondStagePrint / NOwn << " s." << std::endl << std::endl;
 #pragma endregion
 
+#pragma region Третий этап
+	std::vector<int> Neighbours;
+	std::vector<int> SendOffet;
+	std::vector<int> RecvOffset;
+	std::vector<int> Send;
+	std::vector<int> Recv;
+
+	SendOffet.push_back(0);
+	RecvOffset.push_back(0);
+
+	createCom(NLocal, NOwn, IA, JA, Part, L2G, G2L, Neighbours, SendOffet, RecvOffset, Send, Recv,
+		countOfProcesses);
+#pragma endregion
+
 	if (isPrint)
 	{
 		debuginfo << printResult(resultGraph, IA, JA, seconds, NOwn, processId, G2L, L2G, Part) << std::endl;
 		debuginfo << printSLAE(A, b, IA, NOwn, NLocal, processId) << std::endl;
+		debuginfo << printCom(Neighbours, SendOffet, RecvOffset, Send, Recv, processId, L2G) << std::endl;
 	}
 
-	std::cout << debuginfo.str() << std::endl << std::endl;
+	std::cout << debuginfo.str() << std::endl << "     ////////////////////////////////////     " << std::endl << std::endl;
 
 	MPI_Finalize();
 
