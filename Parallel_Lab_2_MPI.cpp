@@ -14,6 +14,9 @@
 
 #define MaxOmpThreads 8
 
+
+#pragma region Этап 1. Генерация портрета
+
 bool isThroughLinkDownOfNode(int nodeId, int countOfRows, int countOfColumns, int nodeIndexOfRow, int nodeIndexOfColumn, int processId,
 	int loop, int k1) {
 
@@ -32,17 +35,18 @@ bool isThroughLinkDownOfNode(int nodeId, int countOfRows, int countOfColumns, in
 	return result;
 }
 
-void createNodesOfGraph(int processId, int Px, int Py, int ib, int ie, int jb, int je, int countOfColumns, int countOfRows, int k1,
+void createNodesOfGraph(int processId, int processesColumns, int processesRows, int columnIndexBegin, int columnIndexEnd, int rowIndexBegin, int rowIndexEnd, int countOfColumns, int countOfRows, int k1,
 	int k2, std::vector<int>& IA, std::vector<int>& JA, std::map<int, std::vector<int>>& resultGraph, int& NLocal,
-	int& NOwn, std::vector<int>& Part, std::vector<int>& G2L) {
+	int& NOwn, std::vector<int>& Part, std::vector<int>& G2L, std::vector<int>& L2G) {
 
 	int loop = k1 + k2;
 	std::map<int, int> haloGraph;
+	int localIndex = 0;
 
 #pragma omp parallel 
 	{
 #pragma omp for
-		for (int j = jb - 1; j <= je + 1; j++)
+		for (int j = rowIndexBegin - 1; j <= rowIndexEnd + 1; j++)
 		{
 			bool isHaloJ = false;
 
@@ -50,11 +54,11 @@ void createNodesOfGraph(int processId, int Px, int Py, int ib, int ie, int jb, i
 				continue;
 			}
 			else {
-				isHaloJ = j == (jb - 1) || j == (je + 1);
+				isHaloJ = j == (rowIndexBegin - 1) || j == (rowIndexEnd + 1);
 			}
 
 
-			for (int i = ib - 1; i <= ie + 1; i++)
+			for (int i = columnIndexBegin - 1; i <= columnIndexEnd + 1; i++)
 			{
 				bool isHaloI = false;
 				if (i < 0 || i == countOfColumns)
@@ -63,7 +67,7 @@ void createNodesOfGraph(int processId, int Px, int Py, int ib, int ie, int jb, i
 				}
 				else
 				{
-					isHaloI = i == (ib - 1) || i == (ie + 1);
+					isHaloI = i == (columnIndexBegin - 1) || i == (columnIndexEnd + 1);
 				}
 
 
@@ -132,18 +136,18 @@ void createNodesOfGraph(int processId, int Px, int Py, int ib, int ie, int jb, i
 					if (isHaloI ^ isHaloJ)
 					{
 						int partProcessId = processId;
-						if (j == jb - 1) {
-							partProcessId -= Px;
+						if (j == rowIndexBegin - 1) {
+							partProcessId -= processesColumns;
 						}
-						if (j == je + 1)
+						if (j == rowIndexEnd + 1)
 						{
-							partProcessId += Px;
+							partProcessId += processesColumns;
 						}
-						if (i == ib - 1)
+						if (i == columnIndexBegin - 1)
 						{
 							partProcessId -= 1;
 						}
-						if (i == ie + 1)
+						if (i == columnIndexEnd + 1)
 						{
 							partProcessId += 1;
 						}
@@ -159,88 +163,90 @@ void createNodesOfGraph(int processId, int Px, int Py, int ib, int ie, int jb, i
 		}
 	}
 
+	G2L.resize(countOfColumns * countOfRows);
+#pragma omp parallel
+	{
+
+#pragma omp for
+		for (int i = 0; i < G2L.size(); i++)
+		{
+			G2L.at(i) = -1;
+		}
+	}
+
 	NOwn = resultGraph.size();
 	NLocal = NOwn + haloGraph.size();
 	IA.resize(NOwn);
 	IA.push_back(0);
 
 	int i = 0;
-	// Заполнение портретов
-	for (auto tempPair : resultGraph)
-	{
-		std::vector<int> nodesNeighbors = tempPair.second;
-		IA.at(i + 1) = IA.at(i) + nodesNeighbors.size();
-
-		for (int element : nodesNeighbors)
-		{
-			JA.push_back(element);
-		}
-
-		G2L.push_back(tempPair.first);
+	for (auto tempPair : resultGraph) {
+		L2G.push_back(tempPair.first);
 		Part.push_back(processId);
-
+		G2L.at(L2G.at(i)) = i;
 		i++;
 	}
 
 	for (auto tempPair : haloGraph)
 	{
-		G2L.push_back(tempPair.first);
+		L2G.push_back(tempPair.first);
 		Part.push_back(tempPair.second);
+		G2L.at(L2G.at(i)) = i;
+		i++;
 	}
 
-
-	//std::cout << "Process " << processId << " NO: " << NO << ", NH: " << NH << std::endl;
-
-	/*if (processId == 1)
+	i = 0;
+	// Заполнение портретов
+	for (auto tempPair : resultGraph)
 	{
-		std::cout << "Own" << std::endl;
-
-		for (auto temp : resultGraph) {
-			std::cout << temp.first << std::endl;
+		int counterIA = 0;
+		for (int element : tempPair.second)
+		{
+			int localIndexOfNode = G2L.at(element);
+			if (localIndexOfNode < NOwn && localIndexOfNode >= 0)
+			{
+				JA.push_back(localIndexOfNode);
+				counterIA++;
+			}
 		}
 
-		std::cout << "Halo" << std::endl;
-
-		for (auto temp : haloGraph) {
-			std::cout << temp.first << std::endl;
-		}
-	}*/
-
-	int s = 1;
+		IA.at(i + 1) = IA.at(i) + counterIA;
+		i++;
+	}
 
 }
 
+void calculateSubAreaIndexes(int processId, int processesColumns, int processesRows, int& columnIndexBegin, int& columnIndexEnd,
+	int& rowIndexBegin, int& rowIndexEnd, int countOfColumns, int countOfRows) {
 
-void calculateSubAreaIndexes(int processId, int Px, int Py, int& ib, int& ie, int& jb, int& je, int Nx, int Ny) {
+	std::vector<int> offsetColumns, offsetRows;
+	offsetColumns.resize(processesColumns);
+	offsetRows.resize(processesRows);
 
-	std::vector<int> offsetX, offsetY;
-	offsetX.resize(Py);
-	offsetY.resize(Px);
-
-	int processXId = processId % Py;
-	int processYId = processId / Py;
+	int processColumnId = processId % processesColumns;
+	int processRowId = processId / processesColumns;
 
 	bool includeHalo = false;
 
 	// По текущей строке
-	if (offsetX.at(processYId) == 0)
+	if (offsetColumns.at(processColumnId) == 0)
 	{
-		offsetX.at(processYId) = Nx % Px;
-		MPI_Bcast(&offsetX.at(processYId), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		offsetColumns.at(processColumnId) = countOfColumns % processesColumns;
+		MPI_Bcast(&offsetColumns.at(processColumnId), 1, MPI_INT, 0, MPI_COMM_WORLD);
 	}
 
-	int countToOneProcessX = Nx / Px;
-	bool remainderX = (processXId < offsetX.at(processYId));
+	int countToOneProcessX = countOfColumns / processesColumns;
+	bool remainderX = (processColumnId < offsetColumns.at(processColumnId));
 
-	ib = processXId * countToOneProcessX + ((remainderX) ? processXId : 0);
+	columnIndexBegin = processColumnId * countToOneProcessX + ((remainderX) ? processColumnId : 0);
 
 	if (!remainderX) {
-		ib += offsetX.at(processYId);
+		columnIndexBegin += offsetColumns.at(processColumnId);
 	}
 
-	ie = ib + countToOneProcessX - ((remainderX) ? 0 : 1);
+	columnIndexEnd = columnIndexBegin + countToOneProcessX - ((remainderX) ? 0 : 1);
 
-	if (includeHalo) {
+	/*if (includeHalo) {
 		if (ib > 0) {
 			ib--;
 		}
@@ -248,33 +254,33 @@ void calculateSubAreaIndexes(int processId, int Px, int Py, int& ib, int& ie, in
 		{
 			ie++;
 		}
-	}
+	}*/
 
 	// По текущему столбцу
-	if (offsetY.at(processXId) == 0)
+	if (offsetRows.at(processRowId) == 0)
 	{
-		offsetY.at(processXId) = Ny % Py;
-		MPI_Bcast(&offsetY.at(processXId), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		offsetRows.at(processRowId) = countOfRows % processesRows;
+		MPI_Bcast(&offsetRows.at(processRowId), 1, MPI_INT, 0, MPI_COMM_WORLD);
 	}
-	int countToOneProcessY = Ny / Py;
-	bool remainderY = (processYId < offsetY.at(processXId));
+	int countToOneProcessY = countOfRows / processesRows;
+	bool remainderY = (processRowId < offsetRows.at(processRowId));
 
-	jb = processYId * countToOneProcessY + ((remainderY) ? processYId : 0);
+	rowIndexBegin = processRowId * countToOneProcessY + ((remainderY) ? processRowId : 0);
 
 	if (!remainderY) {
-		jb += offsetY.at(processXId);
+		rowIndexBegin += offsetRows.at(processRowId);
 	}
 
-	je = jb + countToOneProcessY - ((remainderY) ? 0 : 1);
+	rowIndexEnd = rowIndexBegin + countToOneProcessY - ((remainderY) ? 0 : 1);
 
-	if (includeHalo) {
+	/*if (includeHalo) {
 		if (jb > 0) {
 			jb--;
 		}
 		if (je < Ny - 1) {
 			je++;
 		}
-	}
+	}*/
 }
 
 std::string vectorToString(std::vector<int> intVector)
@@ -331,34 +337,40 @@ std::string createAdjacencyList(std::map<int, std::vector<int>> graph)
 	return result;
 }
 
-void printResult(std::map<int, std::vector<int>> graph, std::vector<int> IA, std::vector<int> JA, double seconds, int countOfNodes,
-	int processId, std::vector<int> G2L, std::vector<int> Part)
+std::string printResult(std::map<int, std::vector<int>> graph, std::vector<int> IA, std::vector<int> JA, double seconds,
+	int countOfNodes, int processId, std::vector<int> G2L, std::vector<int> L2G, std::vector<int> Part)
 {
-	std::cout << "Process " << processId << ": N (size of matrix) - " << countOfNodes << " nodes" << std::endl;
+	std::stringstream result;
+
+	result << "Process " << processId << ": N (size of matrix) - " << countOfNodes << " nodes" << std::endl;
 
 	std::string IAstring = vectorToString(IA);
-	std::cout << "Process " << processId << ": IA: " << IAstring << std::endl;
+	result << "Process " << processId << ": IA: " << IAstring << std::endl;
 
 	std::string JAstring = vectorToString(JA);
-	std::cout << "Process " << processId << ": JA: " << JAstring << std::endl;
+	result << "Process " << processId << ": JA: " << JAstring << std::endl;
 
 	std::string adjancecyString = createAdjacencyList(graph);
-	std::cout << "Process " << processId << ": Adjacency list: " << std::endl;
-	std::cout << adjancecyString << std::endl;
+	result << "Process " << processId << ": Adjacency list: " << std::endl << adjancecyString << std::endl;
 
 	std::string G2LString = vectorToString(G2L);
-	std::cout << "Process " << processId << ": G2L: " << G2LString << std::endl;
+	result << "Process " << processId << ": G2L: " << G2LString << std::endl;
+
+	std::string L2GString = vectorToString(L2G);
+	result << "Process " << processId << ": L2G: " << L2GString << std::endl;
 
 	std::string PartString = vectorToString(Part);
-	std::cout << "Process " << processId << ": Part: " << PartString << std::endl;
+	result << "Process " << processId << ": Part: " << PartString << std::endl;
 
 	//std::cout << "Execution time: " << seconds << " s." << std::endl;
 	//std::cout << "Time per 1 node: " << seconds / countOfNodes << " s." << std::endl;
+
+	return result.str();
 }
 
 // Проверка, что Px * Py = P, указанному при запуске программы
-bool isCountOfProcessesValid(int Px, int Py, int countOfProcesses, int processId) {
-	if (countOfProcesses != Px * Py) {
+bool isCountOfProcessesValid(int processesColumns, int processesRows, int countOfProcesses, int processId) {
+	if (countOfProcesses != processesColumns * processesRows) {
 		if (processId == 0) {
 			std::cout << "The number of MPI processes does not match the mesh decomposition parameters. (Количество MPI процессов не совпадает с параметрами декомпозции сетки.)";
 			//MPI_Abort(MPI_COMM_WORLD, -1);
@@ -370,8 +382,8 @@ bool isCountOfProcessesValid(int Px, int Py, int countOfProcesses, int processId
 }
 
 // Инициализация стартовых переменных
-bool initVariables(int argc, char* argv[], int& Nx, int& Ny, int& k1, int& k2, int& Px, int& Py, double& tol,
-	std::vector<int>& arguments, bool& isPrint) {
+bool initVariables(int argc, char* argv[], int& countOfColumns, int& countOfRows, int& k1, int& k2, int& processesColumns,
+	int& processesRows, double& tol, std::vector<int>& arguments, bool& isPrint) {
 	// Первый параметр - ссылка на сборку
 	for (int i = 1; i < argc; i++)
 	{
@@ -398,12 +410,12 @@ bool initVariables(int argc, char* argv[], int& Nx, int& Ny, int& k1, int& k2, i
 		return false;
 	}
 
-	Nx = arguments[0] + 1;
-	Ny = arguments[1] + 1;
+	countOfColumns = arguments[0] + 1;
+	countOfRows = arguments[1] + 1;
 	k1 = arguments[2];
 	k2 = arguments[3];
-	Py = arguments[4];
-	Px = arguments[5];
+	processesColumns = arguments[4];
+	processesRows = arguments[5];
 
 	if (arguments.size() > 5)
 	{
@@ -413,22 +425,113 @@ bool initVariables(int argc, char* argv[], int& Nx, int& Ny, int& k1, int& k2, i
 	return true;
 }
 
+#pragma endregion
+
+#pragma region Этап 2. Генерация СЛАУ
+
+void makeSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<double>& A, std::vector<double>& b, int NOwn, int NLocal,
+	std::vector<int> L2G)
+{
+	// i - номер строки, j - номер столбца
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < NOwn; i++)
+		{
+			double rowSum = 0;
+			int diagonalIndex = 0;
+			int startIndex = IA.at(i);
+			int endIndex = IA.at(i + 1);
+
+			for (int j = startIndex; j < endIndex; ++j)
+			{
+				int indexOfNode = JA.at(j);
+				if (i == indexOfNode)
+				{
+					diagonalIndex = j;
+					continue;
+				}
+				else
+				{
+					double value = cos(i * L2G.at(indexOfNode) + i + L2G.at(indexOfNode));
+					A.at(j) = value;
+					rowSum = rowSum + std::fabs(value);
+				}
+			}
+			A.at(diagonalIndex) = 1.234 * rowSum;
+			b.at(i) = sin(L2G.at(i));
+		}
+	}
+}
+
+std::string printSLAE(std::vector<double> A, std::vector<double> b, std::vector<int> IA, int NOwn, int NLocal, int processId)
+{
+	std::stringstream resultString;
+
+	resultString << "Process " << processId << ": Matrix and right-hand side coefficients: " << std::endl;
+
+	int countOfLinks = 0;
+	int currentIndex = 0;
+	for (int i = 1; i < NOwn; i++)
+	{
+		if (i <= NOwn)
+		{
+			countOfLinks = IA.at(i) - IA.at(i - 1);
+
+			resultString << std::to_string(i - 1) << ". [";
+			for (int j = 0; j < countOfLinks; j++)
+			{
+				resultString << std::fixed << std::showpoint << std::setprecision(5) << A.at(currentIndex);
+				currentIndex++;
+				if (j != countOfLinks - 1)
+				{
+					resultString << ", ";
+				}
+			}
+
+			resultString << "]";
+		}
+
+		resultString << " = " << std::fixed << std::showpoint << std::setprecision(5) << b.at(i - 1) << std::endl;
+	}
+
+	return resultString.str();
+}
+
+
+#pragma endregion
+
+
 int main(int argc, char* argv[])
 {
 	setlocale(LC_ALL, "Russian");
 
 	omp_set_num_threads(MaxOmpThreads);
-	int Nx, Ny, Py, Px, k1, k2, NLocal, NOwn;
+	// Nx = countOfColumns
+	// Ny = countOfRows
+	// Px = processesColumns
+	// Py = processesRows
+	int countOfColumns, countOfRows, processesColumns, processesRows, k1, k2, NLocal, NOwn;
 	int countOfProcesses, processId;
 	// Точность решения
 	double tol;
 	bool isPrint;
-	std::vector<int> arguments, IA, JA, offsetX, offsetY, Part, G2L;
+	std::vector<int> arguments, IA, JA, Part, G2L, L2G;
 	std::map<int, std::vector<int>> resultGraph;
 	// Диапазоны индексов подобласти каждого из процесса
-	int ib, ie, jb, je;
+	// ib = columnIndexBegin
+	// ie = columnIndexEnd
+	// jb = rowIndexBegin
+	// je = rowIndexEnd
+	int columnIndexBegin, columnIndexEnd, rowIndexBegin, rowIndexEnd;
 
-	if (!initVariables(argc, argv, Nx, Ny, k1, k2, Px, Py, tol, arguments, isPrint)) {
+	std::stringstream debuginfo;
+
+#pragma region Первый этап
+
+#pragma endregion
+
+	if (!initVariables(argc, argv, countOfColumns, countOfRows, k1, k2, processesColumns, processesRows, tol, arguments, isPrint)) {
 		return 0;
 	}
 
@@ -436,24 +539,47 @@ int main(int argc, char* argv[])
 	MPI_Comm_rank(MPI_COMM_WORLD, &processId);
 	MPI_Comm_size(MPI_COMM_WORLD, &countOfProcesses);
 
-	if (!isCountOfProcessesValid(Px, Py, countOfProcesses, processId)) {
+	if (!isCountOfProcessesValid(processesColumns, processesRows, countOfProcesses, processId)) {
 		return 0;
 	}
 
-	calculateSubAreaIndexes(processId, Px, Py, ib, ie, jb, je, Nx, Ny);
-	
+	calculateSubAreaIndexes(processId, processesColumns, processesRows, columnIndexBegin, columnIndexEnd, rowIndexBegin, rowIndexEnd,
+		countOfColumns, countOfRows);
+
 	double start = omp_get_wtime();
-	createNodesOfGraph(processId, Px, Py, ib, ie, jb, je, Nx, Ny, k1, k2, IA, JA, resultGraph, NLocal, NOwn, Part, G2L);
+	createNodesOfGraph(processId, processesColumns, processesRows, columnIndexBegin, columnIndexEnd, rowIndexBegin, rowIndexEnd,
+		countOfColumns, countOfRows, k1, k2, IA, JA, resultGraph, NLocal, NOwn, Part, G2L, L2G);
 	double end = omp_get_wtime();
 	double seconds = end - start;
-	std::cout << "Process " << processId << ": Total nodes: " << NOwn << " elem." << std::endl;
-	std::cout << "Process " << processId << ": First stage time: " << seconds << " s." << std::endl;
+	debuginfo << "Process " << processId << ": Total nodes: " << NOwn << " elem." << std::endl;
+	debuginfo << "Process " << processId << ": First stage time: " << seconds << " s." << std::endl;
+	//printf("Process = %d, columnIndexBegin: %d, columnIndexEnd: %d\, rowIndexBegin: %d, rowIndexEnd: %d\n", processId, columnIndexBegin,
+	//	columnIndexEnd, rowIndexBegin, rowIndexEnd);
+#pragma endregion
+
+#pragma region Второй этап
+	// Вектор ненулевых коэффициентов матрицы
+	std::vector<double> A;
+	A.resize(IA.at(NOwn));
+	// Вектор правой части
+	std::vector<double> b;
+	b.resize(NLocal);
+
+	double startSecondStage = omp_get_wtime();
+	makeSLAE(IA, JA, A, b, NOwn, NLocal, L2G);
+	double endSecondStage = omp_get_wtime();
+	double endSecondStagePrint = endSecondStage - startSecondStage;
+	debuginfo << "Process " << processId << ": Second stage time: " << endSecondStagePrint << " s." << std::endl;
+	//std::cout << "Second stage time per 1 elem: " << endSecondStagePrint / NOwn << " s." << std::endl << std::endl;
+#pragma endregion
+
 	if (isPrint)
 	{
-		printResult(resultGraph, IA, JA, seconds, NOwn, processId, G2L, Part);
+		debuginfo << printResult(resultGraph, IA, JA, seconds, NOwn, processId, G2L, L2G, Part) << std::endl;
+		debuginfo << printSLAE(A, b, IA, NOwn, NLocal, processId) << std::endl;
 	}
 
-	printf("Process = %d, ib: %d, ie: %d\, jb: %d, je: %d\n", processId, ib, ie, jb, je);
+	std::cout << debuginfo.str() << std::endl << std::endl;
 
 	MPI_Finalize();
 
