@@ -152,11 +152,13 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 							partProcessId += 1;
 						}
 
+#pragma omp critical
 						haloGraph.insert(std::pair<int, int>(nodeId, partProcessId));
 					}
 				}
 				else
 				{
+#pragma omp critical
 					resultGraph.insert(std::pair<int, std::vector<int>>(nodeId, nodesNeighbors));
 				}
 			}
@@ -213,7 +215,6 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 		IA.at(i + 1) = IA.at(i) + counterIA;
 		i++;
 	}
-
 }
 
 void calculateSubAreaIndexes(int processId, int processesColumns, int processesRows, int& columnIndexBegin, int& columnIndexEnd,
@@ -484,7 +485,7 @@ std::string printSLAE(std::vector<double> A, std::vector<double> b, std::vector<
 
 	int countOfLinks = 0;
 	int currentIndex = 0;
-	for (int i = 1; i < NOwn; i++)
+	for (int i = 1; i <= NOwn; i++)
 	{
 		countOfLinks = IA.at(i) - IA.at(i - 1);
 
@@ -509,7 +510,6 @@ std::string printSLAE(std::vector<double> A, std::vector<double> b, std::vector<
 
 
 #pragma endregion
-
 
 #pragma region Этап 3. Построение схемы обменов
 
@@ -617,6 +617,403 @@ std::string printCom(std::vector<int> Neighbours, std::vector<int> SendOffet, st
 
 #pragma endregion
 
+#pragma region Этап 4. Решение СЛАУ
+
+double scalar(std::vector<double>& x1, std::vector<double>& x2, double& allTime, int& countOfCalls)
+{
+	double start = omp_get_wtime();
+
+	double result = 0;
+	double result2 = 0;
+	std::vector<double> resultVector;
+	int vectorSize = x1.size();
+	resultVector.resize(vectorSize);
+
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < vectorSize; i++)
+		{
+			resultVector.at(i) = x1.at(i) * x2.at(i);
+		}
+	}
+
+	// result = accumulate(resultVector.begin(), resultVector.end(), 0);
+	for (int i = 0; i < vectorSize; i++)
+	{
+		result += resultVector.at(i);
+	}
+
+	double end = omp_get_wtime();
+	allTime += (end - start);
+	countOfCalls++;
+
+	return result;
+}
+
+// Расчет L2 нормы вектора
+double normalizeVector(std::vector<double> x)
+{
+	double result = 0;
+
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < x.size(); i++)
+		{
+			result += x.at(i) * x.at(i);
+		}
+	}
+
+	return std::sqrt(result);
+}
+
+std::vector<double> spMV(int countOfNodes, std::vector<int> IA, std::vector<int> JA, std::vector<double> A, std::vector<double> x,
+	double& allTime, int& countOfCalls)
+{
+	double start = omp_get_wtime();
+
+	std::vector<double> result;
+	result.resize(countOfNodes);
+	if (x.size() == 0)
+	{
+		x.resize(countOfNodes);
+	}
+
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < countOfNodes; i++)
+		{
+			for (int k = IA.at(i); k < IA.at(i + 1); k++)
+			{
+				if (JA.at(k) < countOfNodes)
+				{
+					result.at(i) += A.at(k) * x.at(JA.at(k));
+				}
+			}
+		}
+	}
+
+	double end = omp_get_wtime();
+	allTime += (end - start);
+	countOfCalls++;
+
+	return result;
+}
+
+std::vector<double> linearCombination(std::vector<double> x1, std::vector<double> x2, double a1, double a2,
+	double& allTime, int& countOfCalls)
+{
+	double start = omp_get_wtime();
+
+	std::vector<double> result;
+	int vectorSize = x1.size();
+	result.resize(vectorSize);
+
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < vectorSize; i++)
+		{
+			result.at(i) = x1.at(i) * a1 + x2.at(i) * a2;
+		}
+	}
+
+	double end = omp_get_wtime();
+	allTime += (end - start);
+	countOfCalls++;
+
+	return result;
+}
+
+void createMMatrixFromA(int countOfNodes, std::vector<int> IA, std::vector<int> JA, std::vector<double> A,
+	std::vector<int>& IAM, std::vector<int>& JAM, std::vector<double>& AM)
+{
+	IAM.resize(countOfNodes + 1);
+	AM.resize(countOfNodes);
+	JAM.resize(countOfNodes);
+	IAM.at(0) = 0;
+
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < countOfNodes; i++)
+		{
+			int startIndex = IA.at(i);
+			int endIndex = IA.at(i + 1);
+
+			for (int j = startIndex; j < endIndex; ++j)
+			{
+				int indexOfNode = JA.at(j);
+				if (i == indexOfNode)
+				{
+					AM.at(i) = A.at(j);
+					IAM.at(i + 1) = i + 1;
+					JAM.at(i) = i;
+				}
+			}
+		}
+	}
+}
+
+void reverseMMatrix(std::vector<double>& AM)
+{
+#pragma omp parallel
+	{
+#pragma omp for
+		for (int i = 0; i < AM.size(); i++)
+		{
+			AM.at(i) = 1 / AM.at(i);
+		}
+	}
+}
+
+template <typename VarType>
+void Update(std::vector<VarType>& vectorToUpdate, std::vector<int> Neighbours, std::vector<int> SendOffet,
+	std::vector<int> RecvOffset, std::vector<int> Send, std::vector<int> Recv, int processId, std::stringstream& result) {
+
+	int countOfNeighbours = Neighbours.size();
+	if (countOfNeighbours == 0)
+	{
+		return;
+	}
+
+	int sendCount = SendOffet.at(countOfNeighbours);
+	int recvCount = RecvOffset.at(countOfNeighbours);
+	int sendSize = sendCount * sizeof(VarType);
+	int recvSize = recvCount * sizeof(VarType);
+
+
+	static std::vector<VarType> SENDBUF, RECVBUF;
+	static std::vector<MPI_Request> REQ;
+	static std::vector<MPI_Status> STS;
+
+	if (2 * countOfNeighbours > (int)REQ.size()) {
+		REQ.resize(2 * countOfNeighbours);
+		STS.resize(2 * countOfNeighbours);
+	}
+
+	if (sendSize > (int)SENDBUF.size()) {
+		SENDBUF.resize(sendSize);
+	}
+
+	if (recvSize > (int)RECVBUF.size())
+	{
+		RECVBUF.resize(recvSize);
+	}
+
+	int nreq = 0;
+
+	for (int i = 0; i < countOfNeighbours; i++)
+	{
+		int SZ = (RecvOffset.at(i + 1) - RecvOffset.at(i)) * sizeof(VarType);
+		if (SZ <= 0)
+		{
+			continue;
+		}
+
+		int NB_ID = Neighbours.at(i);
+		int mpires = MPI_Irecv(&RECVBUF.at(RecvOffset.at(i) * sizeof(VarType)), SZ, MPI_CHAR, NB_ID, 0, MPI_COMM_WORLD, &(REQ.at(nreq)));
+		if (mpires != MPI_SUCCESS)
+		{
+			result << "Process " << processId << ". MPI_IRecv failed!";
+		}
+
+		nreq++;
+	}
+
+#pragma	omp parallel for
+	for (int i = 0; i < sendCount; ++i)
+	{
+		SENDBUF.at(i) = vectorToUpdate.at(Send.at(i));
+	}
+
+	for (int i = 0; i < countOfNeighbours; i++)
+	{
+		int SZ = (SendOffet.at(i + 1) - SendOffet.at(i)) * sizeof(VarType);
+		if (SZ <= 0) {
+			continue;
+		}
+
+		int NB_ID = Neighbours.at(i);
+		int mpires = MPI_Isend(&SENDBUF.at(SendOffet.at(i) * sizeof(VarType)), SZ, MPI_CHAR, NB_ID, 0, MPI_COMM_WORLD, &REQ.at(nreq));
+		if (mpires != MPI_SUCCESS)
+		{
+			result << "Process " << processId << ". MPI_ISend failed!";
+		}
+		nreq++;
+	}
+
+	if (nreq > 0)
+	{
+		int mpires = MPI_Waitall(nreq, &REQ.at(0), &STS.at(0));
+		if (mpires != MPI_SUCCESS)
+		{
+			result << "Process " << processId << ". MPI_Waitall failed!";
+		}
+	}
+
+	//#pragma omp parallel for
+	//if (processId == 0)
+	//{
+		result << "!!!!!!!!!!!!!! " << std::endl << "RECVBUF size: " << RECVBUF.size() << ", recvCount size: " << recvCount <<
+			"Recv size: " << Recv.size() << ", vectorToUpdate size: " << vectorToUpdate.size() << std::endl;
+
+		result << "RECV BUF: ";
+		for (int i = 0; i < RECVBUF.size(); i++)
+		{
+			result << RECVBUF.at(i) << " ";
+		}
+		result << std::endl;
+		result << "Recv: ";
+		for (int i = 0; i < Recv.size(); i++)
+		{
+			result << Recv.at(i) << " ";
+		}
+		result << std::endl;
+		result << "vectorToUpdate: ";
+		for (int i = 0; i < vectorToUpdate.size(); i++)
+		{
+			result << vectorToUpdate.at(i) << " ";
+		}
+		result << std::endl;
+		/*for (int i = 0; i < recvCount; i++)
+		{
+			vectorToUpdate.at(Recv.at(i)) = RECVBUF.at(i);
+		}*/
+	//}
+
+}
+
+std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<double> A, std::vector<double> b, int NOwn, int NLocal,
+	double tol, std::vector<double>& xRes, int& n, double& res, std::vector<int> Neighbours, std::vector<int> SendOffet,
+	std::vector<int> RecvOffset, std::vector<int> Send, std::vector<int> Recv, int processId)
+{
+	std::stringstream result;
+
+	//if (processId == 0) {
+	double allTimeSpMV = 0;
+	double allTimeLinear = 0;
+	double allTimeScalar = 0;
+
+	int countOfCallsSpMV = 0;
+	int countOfCallsLinear = 0;
+	int countOfCallsScalar = 0;
+
+	double normB = normalizeVector(b);
+
+	std::vector<double> zCurr;
+	std::vector<double> pPrev;
+	std::vector<double> pCurr;
+	std::vector<double> qCurr;
+	double poPrev;
+	double poCurr;
+	double bettaCurr;
+	double alphaCurr;
+
+	std::vector<double> xPrev;
+	// Вектор с невязкой
+	std::vector<double> rPrev;
+	std::vector<double> rCurr;
+	xPrev.resize(NOwn);
+
+
+	std::vector<double> AX0 = spMV(NOwn, IA, JA, A, xPrev, allTimeSpMV, countOfCallsSpMV);
+	result << "b size: " << b.size() << std::endl;
+	result << "AX0 size: " << AX0.size() << std::endl;
+	rPrev = linearCombination(b, AX0, 1, -1, allTimeLinear, countOfCallsLinear);
+	result << "r prev size: " << rPrev.size() << std::endl;
+
+	bool convergence = false;
+	int k = 1;
+	std::vector<int> IAM;
+	std::vector<int> JAM;
+	std::vector<double> AM;
+	createMMatrixFromA(NOwn, IA, JA, A, IAM, JAM, AM);
+	reverseMMatrix(AM);
+
+	do
+	{
+		if (k == NOwn) {
+			convergence = true;
+			continue;
+		}
+		result << "r prev size: " << rPrev.size() << std::endl;
+
+		//Update(rPrev, Neighbours, SendOffet, RecvOffset, Send, Recv, processId, result);
+		zCurr = spMV(NOwn, IAM, JAM, AM, rPrev, allTimeSpMV, countOfCallsSpMV);
+		poCurr = scalar(rPrev, zCurr, allTimeScalar, countOfCallsScalar);
+
+		if (k == 1)
+		{
+			pCurr = zCurr;
+		}
+		else
+		{
+			bettaCurr = poCurr / poPrev;
+			pCurr = linearCombination(zCurr, pPrev, 1, b.at(k), allTimeLinear, countOfCallsLinear);
+		}
+
+		qCurr = spMV(NOwn, IA, JA, A, pCurr, allTimeSpMV, countOfCallsSpMV);
+		alphaCurr = poCurr / scalar(pCurr, qCurr, allTimeScalar, countOfCallsScalar);
+		xRes = linearCombination(xPrev, pCurr, 1, alphaCurr, allTimeLinear, countOfCallsLinear);
+
+		rCurr = linearCombination(rPrev, qCurr, 1, -alphaCurr, allTimeLinear, countOfCallsLinear);
+
+		res = normalizeVector(rCurr);
+		result << "Step " << k << " ||b - Ax|| = " << res << " po = " << poCurr << std::endl;
+		if (poCurr < tol || k >= 15000)
+		{
+			convergence = true;
+		}
+		else
+		{
+			k++;
+			poPrev = poCurr;
+			pPrev = pCurr;
+			xPrev = xRes;
+			rPrev = rCurr;
+		}
+	} while (!convergence);
+
+	result << "Average time scalar: " << (allTimeScalar / countOfCallsScalar) << " s." << std::endl;
+	result << "Average time linear: " << (allTimeLinear / countOfCallsLinear) << " s." << std::endl;
+	result << "Average time SpMV: " << (allTimeSpMV / countOfCallsSpMV) << " s." << std::endl;
+	result << "Total time scalar: " << (allTimeScalar) << " s." << std::endl;
+	result << "Total time linear: " << (allTimeLinear) << " s." << std::endl;
+	result << "Total time SpMV: " << (allTimeSpMV) << " s." << std::endl;
+
+	n = k;
+	//}
+	return result.str();
+}
+
+std::string printSolveVector(double res, int n, std::vector<double>& x)
+{
+	std::stringstream result;
+
+	result << "x = [";
+	for (int i = 0; i < x.size(); i++)
+	{
+		if (i == x.size() - 1)
+		{
+			result << std::fixed << std::showpoint << std::setprecision(5) << x.at(i) << " ]" << std::endl;
+		}
+		else
+		{
+			result << std::fixed << std::showpoint << std::setprecision(5) << x.at(i) << ", ";
+		}
+	}
+
+	result << "Misclosure rate = " << res << std::endl;
+	result << "Count of steps = " << n << std::endl;
+
+	return result.str();
+}
+
+#pragma endregion
+
 int main(int argc, char* argv[])
 {
 	setlocale(LC_ALL, "Russian");
@@ -678,7 +1075,7 @@ int main(int argc, char* argv[])
 	A.resize(IA.at(NOwn));
 	// Вектор правой части
 	std::vector<double> b;
-	b.resize(NLocal);
+	b.resize(NOwn);
 
 	double startSecondStage = omp_get_wtime();
 	makeSLAE(IA, JA, A, b, NOwn, NLocal, L2G);
@@ -698,8 +1095,31 @@ int main(int argc, char* argv[])
 	SendOffet.push_back(0);
 	RecvOffset.push_back(0);
 
+	double startThirdStage = omp_get_wtime();
 	createCom(NLocal, NOwn, IA, JA, Part, L2G, G2L, Neighbours, SendOffet, RecvOffset, Send, Recv,
 		countOfProcesses);
+	double endThirdStage = omp_get_wtime();
+	double endThirdStagePrint = endThirdStage - startThirdStage;
+	debuginfo << "Process " << processId << ": Third stage time: " << endThirdStagePrint << " s." << std::endl;
+#pragma endregion
+
+#pragma region Четвертый этап
+	// Вектор решения
+	std::vector<double> xRes;
+	// Количество итераций
+	int n = 0;
+	// L2 норма невязки
+	double res = 0;
+
+	double startFourthStage = omp_get_wtime();
+	debuginfo << solveSLAE(IA, JA, A, b, NOwn, NLocal, tol, xRes, n, res, Neighbours, SendOffet, RecvOffset, Send, Recv, processId) <<
+		std::endl;
+	double endFourthStage = omp_get_wtime();
+	double endFourthStagePrint = endFourthStage - startFourthStage;
+	debuginfo << "Process " << processId << ": Fourth stage time: " << endFourthStagePrint << " s." << std::endl;
+	//std::cout << "Third stage time per 1 elem (Время третьего этапа на 1 элемент): " << endThirdStagePrint / countOfNodes << " s." <<
+	//	std::endl << std::endl;
+
 #pragma endregion
 
 	if (isPrint)
@@ -707,6 +1127,7 @@ int main(int argc, char* argv[])
 		debuginfo << printResult(resultGraph, IA, JA, seconds, NOwn, processId, G2L, L2G, Part) << std::endl;
 		debuginfo << printSLAE(A, b, IA, NOwn, NLocal, processId) << std::endl;
 		debuginfo << printCom(Neighbours, SendOffet, RecvOffset, Send, Recv, processId, L2G) << std::endl;
+		debuginfo << printSolveVector(res, n, xRes) << std::endl;
 	}
 
 	std::cout << debuginfo.str() << std::endl << "     ////////////////////////////////////     " << std::endl << std::endl;
