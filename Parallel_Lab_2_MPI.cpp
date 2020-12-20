@@ -619,15 +619,17 @@ std::string printCom(std::vector<int> Neighbours, std::vector<int> SendOffet, st
 
 #pragma region Этап 4. Решение СЛАУ
 
-double scalar(std::vector<double>& x1, std::vector<double>& x2, double& allTime, int& countOfCalls)
+double scalar(std::vector<double> x1, std::vector<double> x2, double& allTime, int& countOfCalls)
 {
 	double start = omp_get_wtime();
 
 	double result = 0;
 	double result2 = 0;
 	std::vector<double> resultVector;
+	std::vector<double> mpiResult;
 	int vectorSize = x1.size();
 	resultVector.resize(vectorSize);
+	mpiResult.resize(vectorSize);
 
 #pragma omp parallel
 	{
@@ -638,11 +640,13 @@ double scalar(std::vector<double>& x1, std::vector<double>& x2, double& allTime,
 		}
 	}
 
-	// result = accumulate(resultVector.begin(), resultVector.end(), 0);
-	for (int i = 0; i < vectorSize; i++)
+	MPI_Allreduce(&resultVector, &result, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	//vectorSize = x1.size();
+	/*for (int i = 0; i < vectorSize; i++)
 	{
+		//result += resultVector.at(i);
 		result += resultVector.at(i);
-	}
+	}*/
 
 	double end = omp_get_wtime();
 	allTime += (end - start);
@@ -769,123 +773,6 @@ void reverseMMatrix(std::vector<double>& AM)
 	}
 }
 
-template <typename VarType>
-void Update(std::vector<VarType>& vectorToUpdate, std::vector<int> Neighbours, std::vector<int> SendOffet,
-	std::vector<int> RecvOffset, std::vector<int> Send, std::vector<int> Recv, int processId, std::stringstream& result) {
-
-	int countOfNeighbours = Neighbours.size();
-	if (countOfNeighbours == 0)
-	{
-		return;
-	}
-
-	int sendCount = SendOffet.at(countOfNeighbours);
-	int recvCount = RecvOffset.at(countOfNeighbours);
-	int sendSize = sendCount * sizeof(VarType);
-	int recvSize = recvCount * sizeof(VarType);
-
-
-	static std::vector<VarType> SENDBUF, RECVBUF;
-	static std::vector<MPI_Request> REQ;
-	static std::vector<MPI_Status> STS;
-
-	if (2 * countOfNeighbours > (int)REQ.size()) {
-		REQ.resize(2 * countOfNeighbours);
-		STS.resize(2 * countOfNeighbours);
-	}
-
-	if (sendSize > (int)SENDBUF.size()) {
-		SENDBUF.resize(sendSize);
-	}
-
-	if (recvSize > (int)RECVBUF.size())
-	{
-		RECVBUF.resize(recvSize);
-	}
-
-	int nreq = 0;
-
-	for (int i = 0; i < countOfNeighbours; i++)
-	{
-		int SZ = (RecvOffset.at(i + 1) - RecvOffset.at(i)) * sizeof(VarType);
-		if (SZ <= 0)
-		{
-			continue;
-		}
-
-		int NB_ID = Neighbours.at(i);
-		int mpires = MPI_Irecv(&RECVBUF.at(RecvOffset.at(i) * sizeof(VarType)), SZ, MPI_CHAR, NB_ID, 0, MPI_COMM_WORLD, &(REQ.at(nreq)));
-		if (mpires != MPI_SUCCESS)
-		{
-			result << "Process " << processId << ". MPI_IRecv failed!";
-		}
-
-		nreq++;
-	}
-
-#pragma	omp parallel for
-	for (int i = 0; i < sendCount; ++i)
-	{
-		SENDBUF.at(i) = vectorToUpdate.at(Send.at(i));
-	}
-
-	for (int i = 0; i < countOfNeighbours; i++)
-	{
-		int SZ = (SendOffet.at(i + 1) - SendOffet.at(i)) * sizeof(VarType);
-		if (SZ <= 0) {
-			continue;
-		}
-
-		int NB_ID = Neighbours.at(i);
-		int mpires = MPI_Isend(&SENDBUF.at(SendOffet.at(i) * sizeof(VarType)), SZ, MPI_CHAR, NB_ID, 0, MPI_COMM_WORLD, &REQ.at(nreq));
-		if (mpires != MPI_SUCCESS)
-		{
-			result << "Process " << processId << ". MPI_ISend failed!";
-		}
-		nreq++;
-	}
-
-	if (nreq > 0)
-	{
-		int mpires = MPI_Waitall(nreq, &REQ.at(0), &STS.at(0));
-		if (mpires != MPI_SUCCESS)
-		{
-			result << "Process " << processId << ". MPI_Waitall failed!";
-		}
-	}
-
-	//#pragma omp parallel for
-	//if (processId == 0)
-	//{
-		result << "!!!!!!!!!!!!!! " << std::endl << "RECVBUF size: " << RECVBUF.size() << ", recvCount size: " << recvCount <<
-			"Recv size: " << Recv.size() << ", vectorToUpdate size: " << vectorToUpdate.size() << std::endl;
-
-		result << "RECV BUF: ";
-		for (int i = 0; i < RECVBUF.size(); i++)
-		{
-			result << RECVBUF.at(i) << " ";
-		}
-		result << std::endl;
-		result << "Recv: ";
-		for (int i = 0; i < Recv.size(); i++)
-		{
-			result << Recv.at(i) << " ";
-		}
-		result << std::endl;
-		result << "vectorToUpdate: ";
-		for (int i = 0; i < vectorToUpdate.size(); i++)
-		{
-			result << vectorToUpdate.at(i) << " ";
-		}
-		result << std::endl;
-		/*for (int i = 0; i < recvCount; i++)
-		{
-			vectorToUpdate.at(Recv.at(i)) = RECVBUF.at(i);
-		}*/
-	//}
-
-}
-
 std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<double> A, std::vector<double> b, int NOwn, int NLocal,
 	double tol, std::vector<double>& xRes, int& n, double& res, std::vector<int> Neighbours, std::vector<int> SendOffet,
 	std::vector<int> RecvOffset, std::vector<int> Send, std::vector<int> Recv, int processId)
@@ -920,10 +807,7 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 
 
 	std::vector<double> AX0 = spMV(NOwn, IA, JA, A, xPrev, allTimeSpMV, countOfCallsSpMV);
-	result << "b size: " << b.size() << std::endl;
-	result << "AX0 size: " << AX0.size() << std::endl;
 	rPrev = linearCombination(b, AX0, 1, -1, allTimeLinear, countOfCallsLinear);
-	result << "r prev size: " << rPrev.size() << std::endl;
 
 	bool convergence = false;
 	int k = 1;
@@ -939,9 +823,7 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 			convergence = true;
 			continue;
 		}
-		result << "r prev size: " << rPrev.size() << std::endl;
 
-		//Update(rPrev, Neighbours, SendOffet, RecvOffset, Send, Recv, processId, result);
 		zCurr = spMV(NOwn, IAM, JAM, AM, rPrev, allTimeSpMV, countOfCallsSpMV);
 		poCurr = scalar(rPrev, zCurr, allTimeScalar, countOfCallsScalar);
 
