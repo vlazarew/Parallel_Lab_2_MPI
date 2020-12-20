@@ -624,12 +624,10 @@ double scalar(std::vector<double> x1, std::vector<double> x2, double& allTime, i
 	double start = omp_get_wtime();
 
 	double result = 0;
-	double result2 = 0;
 	std::vector<double> resultVector;
 	std::vector<double> mpiResult;
 	int vectorSize = x1.size();
 	resultVector.resize(vectorSize);
-	mpiResult.resize(vectorSize);
 
 #pragma omp parallel
 	{
@@ -640,13 +638,12 @@ double scalar(std::vector<double> x1, std::vector<double> x2, double& allTime, i
 		}
 	}
 
-	MPI_Allreduce(&resultVector, &result, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	//vectorSize = x1.size();
-	/*for (int i = 0; i < vectorSize; i++)
-	{
-		//result += resultVector.at(i);
-		result += resultVector.at(i);
-	}*/
+	double processResult = 0;
+	for (int i = 0; i < vectorSize; i++) {
+		processResult += resultVector.at(i);
+	}
+
+	MPI_Allreduce(&processResult, &result, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
 	double end = omp_get_wtime();
 	allTime += (end - start);
@@ -673,13 +670,68 @@ double normalizeVector(std::vector<double> x)
 }
 
 std::vector<double> spMV(int countOfNodes, std::vector<int> IA, std::vector<int> JA, std::vector<double> A, std::vector<double> x,
-	double& allTime, int& countOfCalls)
+	double& allTime, int& countOfCalls, std::vector<int> Send, std::vector<int> Recv, std::vector<int> Neighbours, std::vector<int> SendOffset, std::vector<int> RecvOffset, int processId)
 {
 	double start = omp_get_wtime();
 
-	std::vector<double> result;
-	result.resize(countOfNodes);
-	if (x.size() == 0)
+	std::vector<double> xSend(countOfNodes);
+	std::map<int, double> xRecv;
+	int total = Send.size() + Recv.size();
+	std::vector<MPI_Request> request(total);
+
+	//std::cout << "req" << request.size() << std::endl;
+	//std::cout << "send" << Send.size() << std::endl;
+
+	//if (processId == 0) {
+	//std::cout << "process = " << processId << "neighbours size = " << Neighbours.size() << std::endl;
+	//std::cout << "process = " << processId << "sendoffset size = " << SendOffset.size() << std::endl;
+	for (int i = 0; i < Neighbours.size(); i++) {
+		//std::cout << "process = " << processId << "sendoffset(i) = " << SendOffset.at(i) << "sendoffset(i+1) = " << SendOffset.at(i + 1) << std::endl;
+		for (int j = SendOffset.at(i); j < SendOffset.at(i + 1); j++)
+		{
+			//std::cout << "process = " << processId << "Send.at(j) = " << Send.at(j) << std::endl;
+			xSend.at(Send.at(j)) = x.at(Send.at(j));
+			//for (int i = 0; i < xSend.size(); i++) {
+			//	std::cout << xSend.at(Send.at(j)) << std::endl;
+			//}
+			//for (int i = 0; i < SendOffset.size(); i++) {
+			//	std::cout << "offset"<< SendOffset.at(i) << std::endl;
+			//std::cout << "govno" << xSend.at(Send.at(j)) << std::endl;
+			//std::cout << "process = " << processId << "i = " << i << ", j = " << j << std::endl;
+			//}
+			MPI_Isend(&xSend.at(Send.at(j)), 1, MPI_DOUBLE, Neighbours.at(i), 0, MPI_COMM_WORLD, &request.at(j));
+		}
+		//std::cout << "process = " << processId << "recvoffset  i= " << SendOffset.at(i) << "recvoffset i+1 = " << SendOffset.at(i + 1) << std::endl;
+		for (int j = RecvOffset.at(i); j < RecvOffset.at(i + 1); j++)
+		{
+			//std::cout << "process = " << processId << "Send.at(j) = " << Send.at(j) << std::endl;
+			//xRecv.at(Recv.at(j)) = 0;
+			xRecv[Recv.at(j)] = 0;
+			MPI_Irecv(&xRecv.at(Recv.at(j)), 1, MPI_DOUBLE, Neighbours.at(i), 0, MPI_COMM_WORLD, &request.at(Send.size() + j));
+		}
+	}
+	//}
+
+	MPI_Waitall(total, request.data(), MPI_STATUSES_IGNORE);
+	std::vector<double> result(countOfNodes);
+
+	for (int i = 0; i < countOfNodes; i++)
+	{
+		result.at(i) = 0;
+		int end = IA.at(std::min(i + 1, countOfNodes));
+		for (int j = IA.at(i); j < end; j++)
+		{
+			if (JA.at(j) < countOfNodes)
+			{
+				result.at(i) += A.at(j) * x.at(JA.at(j));
+			}
+			else {
+				result.at(i) += A.at(j) * xRecv.at(JA.at(j));
+			}
+		}
+	}
+
+	/*if (x.size() == 0)
 	{
 		x.resize(countOfNodes);
 	}
@@ -697,7 +749,7 @@ std::vector<double> spMV(int countOfNodes, std::vector<int> IA, std::vector<int>
 				}
 			}
 		}
-	}
+	}*/
 
 	double end = omp_get_wtime();
 	allTime += (end - start);
@@ -790,7 +842,7 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 
 	double normB = normalizeVector(b);
 
-	std::vector<double> zCurr;
+	std::vector<double> zCurr(NOwn);
 	std::vector<double> pPrev;
 	std::vector<double> pCurr;
 	std::vector<double> qCurr;
@@ -806,16 +858,28 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 	xPrev.resize(NOwn);
 
 
-	std::vector<double> AX0 = spMV(NOwn, IA, JA, A, xPrev, allTimeSpMV, countOfCallsSpMV);
+	std::vector<double> AX0 = spMV(NOwn, IA, JA, A, xPrev, allTimeSpMV, countOfCallsSpMV, Send, Recv, Neighbours, SendOffet, RecvOffset, processId);
 	rPrev = linearCombination(b, AX0, 1, -1, allTimeLinear, countOfCallsLinear);
+	//rPrev = b;
 
 	bool convergence = false;
 	int k = 1;
 	std::vector<int> IAM;
 	std::vector<int> JAM;
-	std::vector<double> AM;
+	std::vector<double> AM(NOwn);
 	createMMatrixFromA(NOwn, IA, JA, A, IAM, JAM, AM);
 	reverseMMatrix(AM);
+
+	/*for (int i = 0; i < NOwn; i += 1) {
+		//solution.x[i] = 0;
+		//r[i] = area.b[i];
+		int d = IA.at(i);
+		while (JA.at(d) != i) {
+			d += 1;
+		}
+		AM.at(i) = 1.0 / A.at(d);
+	}*/
+
 
 	do
 	{
@@ -824,7 +888,11 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 			continue;
 		}
 
-		zCurr = spMV(NOwn, IAM, JAM, AM, rPrev, allTimeSpMV, countOfCallsSpMV);
+		/*for (int i = 0; i < NOwn; i += 1) {
+			zCurr.at(i) = AM.at(i) * rPrev.at(i);
+		}*/
+
+		zCurr = spMV(NOwn, IAM, JAM, AM, rPrev, allTimeSpMV, countOfCallsSpMV, Send, Recv, Neighbours, SendOffet, RecvOffset, processId);
 		poCurr = scalar(rPrev, zCurr, allTimeScalar, countOfCallsScalar);
 
 		if (k == 1)
@@ -834,10 +902,10 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 		else
 		{
 			bettaCurr = poCurr / poPrev;
-			pCurr = linearCombination(zCurr, pPrev, 1, b.at(k), allTimeLinear, countOfCallsLinear);
+			pCurr = linearCombination(zCurr, pPrev, 1, bettaCurr, allTimeLinear, countOfCallsLinear);
 		}
 
-		qCurr = spMV(NOwn, IA, JA, A, pCurr, allTimeSpMV, countOfCallsSpMV);
+		qCurr = spMV(NOwn, IA, JA, A, pCurr, allTimeSpMV, countOfCallsSpMV, Send, Recv, Neighbours, SendOffet, RecvOffset, processId);
 		alphaCurr = poCurr / scalar(pCurr, qCurr, allTimeScalar, countOfCallsScalar);
 		xRes = linearCombination(xPrev, pCurr, 1, alphaCurr, allTimeLinear, countOfCallsLinear);
 
