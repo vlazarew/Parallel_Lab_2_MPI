@@ -1,6 +1,9 @@
 .vs
 x64
 .vscode
+build
+privateKey.ppk
+test
 
 # Prerequisites
 *.d

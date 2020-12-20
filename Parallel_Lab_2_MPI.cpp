@@ -12,51 +12,47 @@
 #include <numeric>
 #include <math.h>
 
-#define MaxOmpThreads 8
-
-
 #pragma region Этап 1. Генерация портрета
 
 bool isThroughLinkDownOfNode(int nodeId, int countOfRows, int countOfColumns, int nodeIndexOfRow, int nodeIndexOfColumn, int processId,
-	int loop, int k1) {
+							 int loop, int k1)
+{
 
-	if ((nodeIndexOfColumn == (countOfColumns - 1)) || (nodeIndexOfRow == (countOfRows - 1))) {
-		//std::cout << "Process " << processId << ", NodeId " << nodeId << " row: " << nodeIndexOfRow <<
-		//	", column: " << nodeIndexOfColumn << ", marked: " << false << std::endl;
+	if ((nodeIndexOfColumn == (countOfColumns - 1)) || (nodeIndexOfRow == (countOfRows - 1)))
+	{
 		return false;
 	}
 
 	int currentFixedId = nodeId - nodeIndexOfRow;
 	bool result = ((currentFixedId % loop) != 0) && ((currentFixedId % loop) > k1 - 1) && ((currentFixedId % loop) < loop);
 
-	//std::cout << "Process " << processId << ", NodeId " << nodeId << " row: " << nodeIndexOfRow <<
-	//	", column: " << nodeIndexOfColumn << ", marked: " << result << std::endl;
-
 	return result;
 }
 
 void createNodesOfGraph(int processId, int processesColumns, int processesRows, int columnIndexBegin, int columnIndexEnd, int rowIndexBegin, int rowIndexEnd, int countOfColumns, int countOfRows, int k1,
-	int k2, std::vector<int>& IA, std::vector<int>& JA, std::map<int, std::vector<int>>& resultGraph, int& NLocal,
-	int& NOwn, std::vector<int>& Part, std::vector<int>& G2L, std::vector<int>& L2G) {
+						int k2, std::vector<int> &IA, std::vector<int> &JA, std::map<int, std::vector<int>> &resultGraph, int &NLocal,
+						int &NOwn, std::vector<int> &Part, std::vector<int> &G2L, std::vector<int> &L2G)
+{
 
 	int loop = k1 + k2;
 	std::map<int, int> haloGraph;
 	int localIndex = 0;
 
-#pragma omp parallel 
+#pragma omp parallel
 	{
 #pragma omp for
 		for (int j = rowIndexBegin - 1; j <= rowIndexEnd + 1; j++)
 		{
 			bool isHaloJ = false;
 
-			if (j < 0 || j == countOfRows) {
+			if (j < 0 || j == countOfRows)
+			{
 				continue;
 			}
-			else {
+			else
+			{
 				isHaloJ = j == (rowIndexBegin - 1) || j == (rowIndexEnd + 1);
 			}
-
 
 			for (int i = columnIndexBegin - 1; i <= columnIndexEnd + 1; i++)
 			{
@@ -69,7 +65,6 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 				{
 					isHaloI = i == (columnIndexBegin - 1) || i == (columnIndexEnd + 1);
 				}
-
 
 				std::vector<int> nodesNeighbors;
 
@@ -136,7 +131,8 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 					if (isHaloI ^ isHaloJ)
 					{
 						int partProcessId = processId;
-						if (j == rowIndexBegin - 1) {
+						if (j == rowIndexBegin - 1)
+						{
 							partProcessId -= processesColumns;
 						}
 						if (j == rowIndexEnd + 1)
@@ -182,7 +178,8 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 	IA.push_back(0);
 
 	int i = 0;
-	for (auto tempPair : resultGraph) {
+	for (auto tempPair : resultGraph)
+	{
 		L2G.push_back(tempPair.first);
 		Part.push_back(processId);
 		G2L.at(L2G.at(i)) = i;
@@ -217,8 +214,9 @@ void createNodesOfGraph(int processId, int processesColumns, int processesRows, 
 	}
 }
 
-void calculateSubAreaIndexes(int processId, int processesColumns, int processesRows, int& columnIndexBegin, int& columnIndexEnd,
-	int& rowIndexBegin, int& rowIndexEnd, int countOfColumns, int countOfRows) {
+void calculateSubAreaIndexes(int processId, int processesColumns, int processesRows, int &columnIndexBegin, int &columnIndexEnd,
+							 int &rowIndexBegin, int &rowIndexEnd, int countOfColumns, int countOfRows)
+{
 
 	std::vector<int> offsetColumns, offsetRows;
 	offsetColumns.resize(processesColumns);
@@ -241,21 +239,12 @@ void calculateSubAreaIndexes(int processId, int processesColumns, int processesR
 
 	columnIndexBegin = processColumnId * countToOneProcessX + ((remainderX) ? processColumnId : 0);
 
-	if (!remainderX) {
+	if (!remainderX)
+	{
 		columnIndexBegin += offsetColumns.at(processColumnId);
 	}
 
 	columnIndexEnd = columnIndexBegin + countToOneProcessX - ((remainderX) ? 0 : 1);
-
-	/*if (includeHalo) {
-		if (ib > 0) {
-			ib--;
-		}
-		if (ie < Nx - 1)
-		{
-			ie++;
-		}
-	}*/
 
 	// По текущему столбцу
 	if (offsetRows.at(processRowId) == 0)
@@ -268,20 +257,12 @@ void calculateSubAreaIndexes(int processId, int processesColumns, int processesR
 
 	rowIndexBegin = processRowId * countToOneProcessY + ((remainderY) ? processRowId : 0);
 
-	if (!remainderY) {
+	if (!remainderY)
+	{
 		rowIndexBegin += offsetRows.at(processRowId);
 	}
 
 	rowIndexEnd = rowIndexBegin + countToOneProcessY - ((remainderY) ? 0 : 1);
-
-	/*if (includeHalo) {
-		if (jb > 0) {
-			jb--;
-		}
-		if (je < Ny - 1) {
-			je++;
-		}
-	}*/
 }
 
 std::string vectorToString(std::vector<int> intVector, std::vector<int> L2G, bool isGlobal = false)
@@ -348,7 +329,7 @@ std::string createAdjacencyList(std::map<int, std::vector<int>> graph)
 }
 
 std::string printResult(std::map<int, std::vector<int>> graph, std::vector<int> IA, std::vector<int> JA, double seconds,
-	int countOfNodes, int processId, std::vector<int> G2L, std::vector<int> L2G, std::vector<int> Part)
+						int countOfNodes, int processId, std::vector<int> G2L, std::vector<int> L2G, std::vector<int> Part)
 {
 	std::stringstream result;
 
@@ -364,7 +345,8 @@ std::string printResult(std::map<int, std::vector<int>> graph, std::vector<int> 
 	result << "Process " << processId << ": JA (Global): " << JAGlobalString << std::endl;
 
 	std::string adjancecyString = createAdjacencyList(graph);
-	result << "Process " << processId << ": Adjacency list: " << std::endl << adjancecyString << std::endl;
+	result << "Process " << processId << ": Adjacency list: " << std::endl
+		   << adjancecyString << std::endl;
 
 	std::string G2LString = vectorToString(G2L, L2G);
 	result << "Process " << processId << ": G2L: " << G2LString << std::endl;
@@ -375,16 +357,16 @@ std::string printResult(std::map<int, std::vector<int>> graph, std::vector<int> 
 	std::string PartString = vectorToString(Part, L2G);
 	result << "Process " << processId << ": Part: " << PartString << std::endl;
 
-	//std::cout << "Execution time: " << seconds << " s." << std::endl;
-	//std::cout << "Time per 1 node: " << seconds / countOfNodes << " s." << std::endl;
-
 	return result.str();
 }
 
 // Проверка, что Px * Py = P, указанному при запуске программы
-bool isCountOfProcessesValid(int processesColumns, int processesRows, int countOfProcesses, int processId) {
-	if (countOfProcesses != processesColumns * processesRows) {
-		if (processId == 0) {
+bool isCountOfProcessesValid(int processesColumns, int processesRows, int countOfProcesses, int processId)
+{
+	if (countOfProcesses != processesColumns * processesRows)
+	{
+		if (processId == 0)
+		{
 			std::cout << "The number of MPI processes does not match the mesh decomposition parameters. (Количество MPI процессов не совпадает с параметрами декомпозции сетки.)";
 			//MPI_Abort(MPI_COMM_WORLD, -1);
 		}
@@ -395,14 +377,15 @@ bool isCountOfProcessesValid(int processesColumns, int processesRows, int countO
 }
 
 // Инициализация стартовых переменных
-bool initVariables(int argc, char* argv[], int& countOfColumns, int& countOfRows, int& k1, int& k2, int& processesColumns,
-	int& processesRows, double& tol, std::vector<int>& arguments, bool& isPrint) {
+bool initVariables(int argc, char *argv[], int &countOfColumns, int &countOfRows, int &k1, int &k2, int &processesColumns,
+				   int &processesRows, int &countOfThreads, double &tol, std::vector<int> &arguments, bool &isPrint)
+{
 	// Первый параметр - ссылка на сборку
 	for (int i = 1; i < argc; i++)
 	{
 		try
 		{
-			if (i == 7)
+			if (i == 8)
 			{
 				tol = std::stod(argv[i]);
 			}
@@ -417,9 +400,15 @@ bool initVariables(int argc, char* argv[], int& countOfColumns, int& countOfRows
 		}
 	}
 
-	if (arguments.empty() || arguments.size() < 7)
+	if (arguments.empty() || arguments.size() < 8)
 	{
-		std::cout << "Enter 8 elements of the graph portrait (Введите 8 элементов портрета графа) (Nx, Ny, k1, k2, Px, Py, tol, isPrint)!" << std::endl;
+		std::cout << "Enter 8 elements of the graph portrait (Введите 8 элементов портрета графа) (Nx, Ny, k1, k2, Px, Py, T, tol, isPrint)!" << std::endl
+				  << "Nx, Ny - size of grid" << std::endl
+				  << "k1, k2 - count of spaces and links" << std::endl
+				  << "Px, Py - processes to OX, Oy axises" << std::endl
+				  << "T - count of threads" << std::endl
+				  << "tol - solution accuracy" << std::endl
+				  << "isPrint - print debug info";
 		return false;
 	}
 
@@ -429,10 +418,11 @@ bool initVariables(int argc, char* argv[], int& countOfColumns, int& countOfRows
 	k2 = arguments[3];
 	processesColumns = arguments[4];
 	processesRows = arguments[5];
+	countOfThreads = arguments[6];
 
-	if (arguments.size() > 5)
+	if (arguments.size() > 6)
 	{
-		isPrint = (arguments[6] == 1) ? true : false;
+		isPrint = (arguments[7] == 1) ? true : false;
 	}
 
 	return true;
@@ -442,36 +432,30 @@ bool initVariables(int argc, char* argv[], int& countOfColumns, int& countOfRows
 
 #pragma region Этап 2. Генерация СЛАУ
 
-void makeSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<double>& A, std::vector<double>& b, int NOwn, int NLocal,
-	std::vector<int> L2G)
+void makeSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<double> &A, std::vector<double> &b, int NOwn, int NLocal,
+			  std::vector<int> L2G)
 {
-	// i - номер строки, j - номер столбца
 #pragma omp parallel
 	{
 #pragma omp for
 		for (int i = 0; i < NOwn; i++)
 		{
-			double rowSum = 0;
-			int diagonalIndex = 0;
-			int startIndex = IA.at(i);
-			int endIndex = IA.at(i + 1);
-
-			for (int j = startIndex; j < endIndex; ++j)
+			double sum = 0;
+			int diagonal = -1;
+			for (int k = IA.at(i); k < IA.at(i + 1); k++)
 			{
-				int indexOfNode = JA.at(j);
-				if (i == indexOfNode)
+				int j = JA.at(k);
+				if (i != j)
 				{
-					diagonalIndex = j;
-					continue;
+					A.at(k) = cos(L2G.at(i) * L2G.at(j) + L2G.at(i) + L2G.at(j));
+					sum += std::fabs(A.at(k));
 				}
 				else
 				{
-					double value = cos(i * L2G.at(indexOfNode) + i + L2G.at(indexOfNode));
-					A.at(j) = value;
-					rowSum = rowSum + std::fabs(value);
+					diagonal = k;
 				}
 			}
-			A.at(diagonalIndex) = 1.234 * rowSum;
+			A.at(diagonal) = 1.234 * sum;
 			b.at(i) = sin(L2G.at(i));
 		}
 	}
@@ -508,14 +492,14 @@ std::string printSLAE(std::vector<double> A, std::vector<double> b, std::vector<
 	return resultString.str();
 }
 
-
 #pragma endregion
 
 #pragma region Этап 3. Построение схемы обменов
 
 void createCom(int NLocal, int NOwn, std::vector<int> IA, std::vector<int> JA, std::vector<int> Part, std::vector<int> L2G,
-	std::vector<int> G2L, std::vector<int>& Neighbours, std::vector<int>& SendOffet, std::vector<int>& RecvOffset,
-	std::vector<int>& Send, std::vector<int>& Recv, int countOfProcesses) {
+			   std::vector<int> G2L, std::vector<int> &Neighbours, std::vector<int> &SendOffet, std::vector<int> &RecvOffset,
+			   std::vector<int> &Send, std::vector<int> &Recv, int countOfProcesses)
+{
 
 	std::vector<std::vector<int>> SendToProcess;
 	std::vector<std::vector<int>> RecvFromProcess;
@@ -538,7 +522,6 @@ void createCom(int NLocal, int NOwn, std::vector<int> IA, std::vector<int> JA, s
 				SendToProcess.at(haloProcess).push_back(i);
 				RecvFromProcess.at(haloProcess).push_back(indexOfNode);
 			}
-
 		}
 	}
 
@@ -555,7 +538,8 @@ void createCom(int NLocal, int NOwn, std::vector<int> IA, std::vector<int> JA, s
 		Neighbours.push_back(haloProcessId);
 
 		// SendToProcessHalo.size() и RecvFromProcessHalo.size() должны быть равны
-		for (int i = 0; i < SendToProcessHalo.size(); i++) {
+		for (int i = 0; i < SendToProcessHalo.size(); i++)
+		{
 			SendToProcessHalo.at(i) = L2G.at(SendToProcessHalo.at(i));
 			RecvFromProcessHalo.at(i) = L2G.at(RecvFromProcessHalo.at(i));
 		}
@@ -569,13 +553,15 @@ void createCom(int NLocal, int NOwn, std::vector<int> IA, std::vector<int> JA, s
 		RecvFromProcessHalo.resize(std::unique(RecvFromProcessHalo.begin(), RecvFromProcessHalo.end()) - RecvFromProcessHalo.begin());
 
 		// Конвертируем обратно в локальные
-		for (int i = 0; i < SendToProcessHalo.size(); i++) {
+		for (int i = 0; i < SendToProcessHalo.size(); i++)
+		{
 			SendToProcessHalo.at(i) = G2L.at(SendToProcessHalo.at(i));
 			RecvFromProcessHalo.at(i) = G2L.at(RecvFromProcessHalo.at(i));
 		}
 
 		// Добавляем все в вектора Send и Recv
-		for (int i = 0; i < SendToProcessHalo.size(); i++) {
+		for (int i = 0; i < SendToProcessHalo.size(); i++)
+		{
 			Send.push_back(SendToProcessHalo.at(i));
 			Recv.push_back(RecvFromProcessHalo.at(i));
 		}
@@ -583,11 +569,11 @@ void createCom(int NLocal, int NOwn, std::vector<int> IA, std::vector<int> JA, s
 		SendOffet.push_back(Send.size());
 		RecvOffset.push_back(Recv.size());
 	}
-
 }
 
 std::string printCom(std::vector<int> Neighbours, std::vector<int> SendOffet, std::vector<int> RecvOffset,
-	std::vector<int> Send, std::vector<int> Recv, int processId, std::vector<int> L2G) {
+					 std::vector<int> Send, std::vector<int> Recv, int processId, std::vector<int> L2G)
+{
 
 	std::stringstream result;
 
@@ -619,7 +605,7 @@ std::string printCom(std::vector<int> Neighbours, std::vector<int> SendOffet, st
 
 #pragma region Этап 4. Решение СЛАУ
 
-double scalar(std::vector<double> x1, std::vector<double> x2, double& allTime, int& countOfCalls)
+double scalar(std::vector<double> x1, std::vector<double> x2, double &allTime, int &countOfCalls)
 {
 	double start = omp_get_wtime();
 
@@ -639,7 +625,8 @@ double scalar(std::vector<double> x1, std::vector<double> x2, double& allTime, i
 	}
 
 	double processResult = 0;
-	for (int i = 0; i < vectorSize; i++) {
+	for (int i = 0; i < vectorSize; i++)
+	{
 		processResult += resultVector.at(i);
 	}
 
@@ -670,7 +657,7 @@ double normalizeVector(std::vector<double> x)
 }
 
 std::vector<double> spMV(int countOfNodes, std::vector<int> IA, std::vector<int> JA, std::vector<double> A, std::vector<double> x,
-	double& allTime, int& countOfCalls, std::vector<int> Send, std::vector<int> Recv, std::vector<int> Neighbours, std::vector<int> SendOffset, std::vector<int> RecvOffset, int processId)
+						 double &allTime, int &countOfCalls, std::vector<int> Send, std::vector<int> Recv, std::vector<int> Neighbours, std::vector<int> SendOffset, std::vector<int> RecvOffset, int processId)
 {
 	double start = omp_get_wtime();
 
@@ -679,77 +666,43 @@ std::vector<double> spMV(int countOfNodes, std::vector<int> IA, std::vector<int>
 	int total = Send.size() + Recv.size();
 	std::vector<MPI_Request> request(total);
 
-	//std::cout << "req" << request.size() << std::endl;
-	//std::cout << "send" << Send.size() << std::endl;
-
-	//if (processId == 0) {
-	//std::cout << "process = " << processId << "neighbours size = " << Neighbours.size() << std::endl;
-	//std::cout << "process = " << processId << "sendoffset size = " << SendOffset.size() << std::endl;
-	for (int i = 0; i < Neighbours.size(); i++) {
-		//std::cout << "process = " << processId << "sendoffset(i) = " << SendOffset.at(i) << "sendoffset(i+1) = " << SendOffset.at(i + 1) << std::endl;
+	for (int i = 0; i < Neighbours.size(); i++)
+	{
 		for (int j = SendOffset.at(i); j < SendOffset.at(i + 1); j++)
 		{
-			//std::cout << "process = " << processId << "Send.at(j) = " << Send.at(j) << std::endl;
 			xSend.at(Send.at(j)) = x.at(Send.at(j));
-			//for (int i = 0; i < xSend.size(); i++) {
-			//	std::cout << xSend.at(Send.at(j)) << std::endl;
-			//}
-			//for (int i = 0; i < SendOffset.size(); i++) {
-			//	std::cout << "offset"<< SendOffset.at(i) << std::endl;
-			//std::cout << "govno" << xSend.at(Send.at(j)) << std::endl;
-			//std::cout << "process = " << processId << "i = " << i << ", j = " << j << std::endl;
-			//}
 			MPI_Isend(&xSend.at(Send.at(j)), 1, MPI_DOUBLE, Neighbours.at(i), 0, MPI_COMM_WORLD, &request.at(j));
 		}
-		//std::cout << "process = " << processId << "recvoffset  i= " << SendOffset.at(i) << "recvoffset i+1 = " << SendOffset.at(i + 1) << std::endl;
-		for (int j = RecvOffset.at(i); j < RecvOffset.at(i + 1); j++)
+		for (int j = RecvOffset[i]; j < RecvOffset[i + 1]; j++)
 		{
-			//std::cout << "process = " << processId << "Send.at(j) = " << Send.at(j) << std::endl;
-			//xRecv.at(Recv.at(j)) = 0;
 			xRecv[Recv.at(j)] = 0;
 			MPI_Irecv(&xRecv.at(Recv.at(j)), 1, MPI_DOUBLE, Neighbours.at(i), 0, MPI_COMM_WORLD, &request.at(Send.size() + j));
 		}
 	}
-	//}
 
 	MPI_Waitall(total, request.data(), MPI_STATUSES_IGNORE);
 	std::vector<double> result(countOfNodes);
-
-	for (int i = 0; i < countOfNodes; i++)
-	{
-		result.at(i) = 0;
-		int end = IA.at(std::min(i + 1, countOfNodes));
-		for (int j = IA.at(i); j < end; j++)
-		{
-			if (JA.at(j) < countOfNodes)
-			{
-				result.at(i) += A.at(j) * x.at(JA.at(j));
-			}
-			else {
-				result.at(i) += A.at(j) * xRecv.at(JA.at(j));
-			}
-		}
-	}
-
-	/*if (x.size() == 0)
-	{
-		x.resize(countOfNodes);
-	}
 
 #pragma omp parallel
 	{
 #pragma omp for
 		for (int i = 0; i < countOfNodes; i++)
 		{
-			for (int k = IA.at(i); k < IA.at(i + 1); k++)
+			result.at(i) = 0;
+			int end = IA.at(std::min(i + 1, countOfNodes));
+			for (int j = IA.at(i); j < end; j++)
 			{
-				if (JA.at(k) < countOfNodes)
+				if (JA.at(j) < countOfNodes)
 				{
-					result.at(i) += A.at(k) * x.at(JA.at(k));
+					result.at(i) += A.at(j) * x.at(JA.at(j));
+				}
+				else
+				{
+					result.at(i) += A.at(j) * xRecv.at(JA.at(j));
 				}
 			}
 		}
-	}*/
+	}
 
 	double end = omp_get_wtime();
 	allTime += (end - start);
@@ -759,7 +712,7 @@ std::vector<double> spMV(int countOfNodes, std::vector<int> IA, std::vector<int>
 }
 
 std::vector<double> linearCombination(std::vector<double> x1, std::vector<double> x2, double a1, double a2,
-	double& allTime, int& countOfCalls)
+									  double &allTime, int &countOfCalls)
 {
 	double start = omp_get_wtime();
 
@@ -784,7 +737,7 @@ std::vector<double> linearCombination(std::vector<double> x1, std::vector<double
 }
 
 void createMMatrixFromA(int countOfNodes, std::vector<int> IA, std::vector<int> JA, std::vector<double> A,
-	std::vector<int>& IAM, std::vector<int>& JAM, std::vector<double>& AM)
+						std::vector<int> &IAM, std::vector<int> &JAM, std::vector<double> &AM)
 {
 	IAM.resize(countOfNodes + 1);
 	AM.resize(countOfNodes);
@@ -813,7 +766,7 @@ void createMMatrixFromA(int countOfNodes, std::vector<int> IA, std::vector<int> 
 	}
 }
 
-void reverseMMatrix(std::vector<double>& AM)
+void reverseMMatrix(std::vector<double> &AM)
 {
 #pragma omp parallel
 	{
@@ -826,12 +779,11 @@ void reverseMMatrix(std::vector<double>& AM)
 }
 
 std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<double> A, std::vector<double> b, int NOwn, int NLocal,
-	double tol, std::vector<double>& xRes, int& n, double& res, std::vector<int> Neighbours, std::vector<int> SendOffet,
-	std::vector<int> RecvOffset, std::vector<int> Send, std::vector<int> Recv, int processId)
+					  double tol, std::vector<double> &xRes, int &n, double &res, std::vector<int> Neighbours, std::vector<int> SendOffet,
+					  std::vector<int> RecvOffset, std::vector<int> Send, std::vector<int> Recv, int processId)
 {
 	std::stringstream result;
 
-	//if (processId == 0) {
 	double allTimeSpMV = 0;
 	double allTimeLinear = 0;
 	double allTimeScalar = 0;
@@ -857,10 +809,8 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 	std::vector<double> rCurr;
 	xPrev.resize(NOwn);
 
-
 	std::vector<double> AX0 = spMV(NOwn, IA, JA, A, xPrev, allTimeSpMV, countOfCallsSpMV, Send, Recv, Neighbours, SendOffet, RecvOffset, processId);
 	rPrev = linearCombination(b, AX0, 1, -1, allTimeLinear, countOfCallsLinear);
-	//rPrev = b;
 
 	bool convergence = false;
 	int k = 1;
@@ -870,28 +820,8 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 	createMMatrixFromA(NOwn, IA, JA, A, IAM, JAM, AM);
 	reverseMMatrix(AM);
 
-	/*for (int i = 0; i < NOwn; i += 1) {
-		//solution.x[i] = 0;
-		//r[i] = area.b[i];
-		int d = IA.at(i);
-		while (JA.at(d) != i) {
-			d += 1;
-		}
-		AM.at(i) = 1.0 / A.at(d);
-	}*/
-
-
 	do
 	{
-		if (k == NOwn) {
-			convergence = true;
-			continue;
-		}
-
-		/*for (int i = 0; i < NOwn; i += 1) {
-			zCurr.at(i) = AM.at(i) * rPrev.at(i);
-		}*/
-
 		zCurr = spMV(NOwn, IAM, JAM, AM, rPrev, allTimeSpMV, countOfCallsSpMV, Send, Recv, Neighbours, SendOffet, RecvOffset, processId);
 		poCurr = scalar(rPrev, zCurr, allTimeScalar, countOfCallsScalar);
 
@@ -912,8 +842,11 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 		rCurr = linearCombination(rPrev, qCurr, 1, -alphaCurr, allTimeLinear, countOfCallsLinear);
 
 		res = normalizeVector(rCurr);
-		result << "Step " << k << " ||b - Ax|| = " << res << " po = " << poCurr << std::endl;
-		if (poCurr < tol || k >= 15000)
+		if (processId == 0)
+		{
+			result << "Step " << k << " ||b - Ax|| = " << res << " po = " << poCurr << std::endl;
+		}
+		if (poCurr < tol || k >= 100)
 		{
 			convergence = true;
 		}
@@ -927,19 +860,28 @@ std::string solveSLAE(std::vector<int> IA, std::vector<int> JA, std::vector<doub
 		}
 	} while (!convergence);
 
-	result << "Average time scalar: " << (allTimeScalar / countOfCallsScalar) << " s." << std::endl;
-	result << "Average time linear: " << (allTimeLinear / countOfCallsLinear) << " s." << std::endl;
-	result << "Average time SpMV: " << (allTimeSpMV / countOfCallsSpMV) << " s." << std::endl;
-	result << "Total time scalar: " << (allTimeScalar) << " s." << std::endl;
-	result << "Total time linear: " << (allTimeLinear) << " s." << std::endl;
-	result << "Total time SpMV: " << (allTimeSpMV) << " s." << std::endl;
+	double maxAllTimeScalar = 0;
+	double maxAllTimeLinear = 0;
+	double maxAllTimeSpMv = 0;
+	MPI_Allreduce(&allTimeScalar, &maxAllTimeScalar, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+	MPI_Allreduce(&allTimeLinear, &maxAllTimeLinear, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+	MPI_Allreduce(&allTimeSpMV, &maxAllTimeSpMv, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+	if (processId == 0)
+	{
+		result << "Average time scalar: " << (maxAllTimeScalar / countOfCallsScalar) << " s." << std::endl;
+		result << "Average time linear: " << (maxAllTimeLinear / countOfCallsLinear) << " s." << std::endl;
+		result << "Average time SpMV: " << (maxAllTimeSpMv / countOfCallsSpMV) << " s." << std::endl;
+		result << "Total time scalar: " << (maxAllTimeScalar) << " s." << std::endl;
+		result << "Total time linear: " << (maxAllTimeLinear) << " s." << std::endl;
+		result << "Total time SpMV: " << (maxAllTimeSpMv) << " s." << std::endl;
+	}
 
 	n = k;
-	//}
 	return result.str();
 }
 
-std::string printSolveVector(double res, int n, std::vector<double>& x)
+std::string printSolveVector(double res, int n, std::vector<double> &x)
 {
 	std::stringstream result;
 
@@ -964,11 +906,9 @@ std::string printSolveVector(double res, int n, std::vector<double>& x)
 
 #pragma endregion
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
 	setlocale(LC_ALL, "Russian");
-
-	omp_set_num_threads(MaxOmpThreads);
 	// Nx = countOfColumns
 	// Ny = countOfRows
 	// Px = processesColumns
@@ -986,6 +926,7 @@ int main(int argc, char* argv[])
 	// jb = rowIndexBegin
 	// je = rowIndexEnd
 	int columnIndexBegin, columnIndexEnd, rowIndexBegin, rowIndexEnd;
+	int countOfThreads;
 
 	std::stringstream debuginfo;
 
@@ -993,30 +934,31 @@ int main(int argc, char* argv[])
 
 #pragma endregion
 
-	if (!initVariables(argc, argv, countOfColumns, countOfRows, k1, k2, processesColumns, processesRows, tol, arguments, isPrint)) {
+	if (!initVariables(argc, argv, countOfColumns, countOfRows, k1, k2, processesColumns, processesRows, countOfThreads, tol, arguments, isPrint))
+	{
 		return 0;
 	}
+	omp_set_num_threads(countOfThreads);
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &processId);
 	MPI_Comm_size(MPI_COMM_WORLD, &countOfProcesses);
 
-	if (!isCountOfProcessesValid(processesColumns, processesRows, countOfProcesses, processId)) {
+	if (!isCountOfProcessesValid(processesColumns, processesRows, countOfProcesses, processId))
+	{
 		return 0;
 	}
 
 	calculateSubAreaIndexes(processId, processesColumns, processesRows, columnIndexBegin, columnIndexEnd, rowIndexBegin, rowIndexEnd,
-		countOfColumns, countOfRows);
+							countOfColumns, countOfRows);
 
 	double start = omp_get_wtime();
 	createNodesOfGraph(processId, processesColumns, processesRows, columnIndexBegin, columnIndexEnd, rowIndexBegin, rowIndexEnd,
-		countOfColumns, countOfRows, k1, k2, IA, JA, resultGraph, NLocal, NOwn, Part, G2L, L2G);
+					   countOfColumns, countOfRows, k1, k2, IA, JA, resultGraph, NLocal, NOwn, Part, G2L, L2G);
 	double end = omp_get_wtime();
 	double seconds = end - start;
-	debuginfo << "Process " << processId << ": Total nodes: " << NOwn << " elem." << std::endl;
-	debuginfo << "Process " << processId << ": First stage time: " << seconds << " s." << std::endl;
-	//printf("Process = %d, columnIndexBegin: %d, columnIndexEnd: %d\, rowIndexBegin: %d, rowIndexEnd: %d\n", processId, columnIndexBegin,
-	//	columnIndexEnd, rowIndexBegin, rowIndexEnd);
+	double maxFirstStageTime = 0;
+	MPI_Allreduce(&seconds, &maxFirstStageTime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 #pragma endregion
 
 #pragma region Второй этап
@@ -1031,8 +973,8 @@ int main(int argc, char* argv[])
 	makeSLAE(IA, JA, A, b, NOwn, NLocal, L2G);
 	double endSecondStage = omp_get_wtime();
 	double endSecondStagePrint = endSecondStage - startSecondStage;
-	debuginfo << "Process " << processId << ": Second stage time: " << endSecondStagePrint << " s." << std::endl;
-	//std::cout << "Second stage time per 1 elem: " << endSecondStagePrint / NOwn << " s." << std::endl << std::endl;
+	double maxSecondStageTime = 0;
+	MPI_Allreduce(&endSecondStagePrint, &maxSecondStageTime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 #pragma endregion
 
 #pragma region Третий этап
@@ -1047,10 +989,11 @@ int main(int argc, char* argv[])
 
 	double startThirdStage = omp_get_wtime();
 	createCom(NLocal, NOwn, IA, JA, Part, L2G, G2L, Neighbours, SendOffet, RecvOffset, Send, Recv,
-		countOfProcesses);
+			  countOfProcesses);
 	double endThirdStage = omp_get_wtime();
 	double endThirdStagePrint = endThirdStage - startThirdStage;
-	debuginfo << "Process " << processId << ": Third stage time: " << endThirdStagePrint << " s." << std::endl;
+	double maxThirdStageTime = 0;
+	MPI_Allreduce(&endThirdStagePrint, &maxThirdStageTime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 #pragma endregion
 
 #pragma region Четвертый этап
@@ -1062,25 +1005,32 @@ int main(int argc, char* argv[])
 	double res = 0;
 
 	double startFourthStage = omp_get_wtime();
-	debuginfo << solveSLAE(IA, JA, A, b, NOwn, NLocal, tol, xRes, n, res, Neighbours, SendOffet, RecvOffset, Send, Recv, processId) <<
-		std::endl;
+	debuginfo << solveSLAE(IA, JA, A, b, NOwn, NLocal, tol, xRes, n, res, Neighbours, SendOffet, RecvOffset, Send, Recv, processId) << std::endl;
 	double endFourthStage = omp_get_wtime();
 	double endFourthStagePrint = endFourthStage - startFourthStage;
-	debuginfo << "Process " << processId << ": Fourth stage time: " << endFourthStagePrint << " s." << std::endl;
-	//std::cout << "Third stage time per 1 elem (Время третьего этапа на 1 элемент): " << endThirdStagePrint / countOfNodes << " s." <<
-	//	std::endl << std::endl;
-
+	double maxFourthStageTime = 0;
+	MPI_Allreduce(&endFourthStagePrint, &maxFourthStageTime, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 #pragma endregion
 
-	if (isPrint)
+	if (processId == 0)
 	{
-		debuginfo << printResult(resultGraph, IA, JA, seconds, NOwn, processId, G2L, L2G, Part) << std::endl;
-		debuginfo << printSLAE(A, b, IA, NOwn, NLocal, processId) << std::endl;
-		debuginfo << printCom(Neighbours, SendOffet, RecvOffset, Send, Recv, processId, L2G) << std::endl;
-		debuginfo << printSolveVector(res, n, xRes) << std::endl;
+		debuginfo << "Process " << processId << ": Total nodes: " << NOwn << " elem." << std::endl;
+		debuginfo << "Process " << processId << ": First stage time: " << maxFirstStageTime << " s." << std::endl;
+		debuginfo << "Process " << processId << ": Second stage time: " << maxSecondStageTime << " s." << std::endl;
+		debuginfo << "Process " << processId << ": Third stage time: " << maxThirdStageTime << " s." << std::endl;
+		debuginfo << "Process " << processId << ": Fourth stage time: " << maxFourthStageTime << " s." << std::endl;
+		if (isPrint)
+		{
+			debuginfo << printResult(resultGraph, IA, JA, seconds, NOwn, processId, G2L, L2G, Part) << std::endl;
+			debuginfo << printSLAE(A, b, IA, NOwn, NLocal, processId) << std::endl;
+			debuginfo << printCom(Neighbours, SendOffet, RecvOffset, Send, Recv, processId, L2G) << std::endl;
+			debuginfo << printSolveVector(res, n, xRes) << std::endl;
+		}
 	}
 
-	std::cout << debuginfo.str() << std::endl << "     ////////////////////////////////////     " << std::endl << std::endl;
+	std::cout << debuginfo.str() << std::endl
+			  << "     ////////////////////////////////////     " << std::endl
+			  << std::endl;
 
 	MPI_Finalize();
 
